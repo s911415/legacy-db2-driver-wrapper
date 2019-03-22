@@ -6,7 +6,7 @@ import com.ibm.db2.jcc.am.io;
 import java.sql.*;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.Executor;
+import java.util.concurrent.*;
 
 public class Db2forJccConnectionWrapper implements Connection {
     private final com.ibm.db2.jcc.t4.b c;
@@ -217,7 +217,20 @@ public class Db2forJccConnectionWrapper implements Connection {
 
     @Override
     public boolean isValid(int timeout) throws SQLException {
-        throw new NotImplementedException();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<Boolean> future = executor.submit(new Db2TestConnectionTask());
+        try {
+            return future.get(timeout, TimeUnit.SECONDS);
+        } catch (InterruptedException | TimeoutException e) {
+            future.cancel(true);
+            e.printStackTrace();
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof SQLException)
+                throw (SQLException) e.getCause();
+        }
+
+        executor.shutdownNow();
+        return false;
     }
 
     @Override
@@ -260,7 +273,7 @@ public class Db2forJccConnectionWrapper implements Connection {
         try (Statement statement = c.createStatement()) {
             try (ResultSet rs = statement.executeQuery("select current_schema  \n" +
                     "from   sysibm.sysdummy1")) {
-                if(rs.next()) {
+                if (rs.next()) {
                     return rs.getString(1);
                 }
             }
@@ -289,5 +302,20 @@ public class Db2forJccConnectionWrapper implements Connection {
     @Override
     public boolean isWrapperFor(Class<?> iface) throws SQLException {
         throw new NotImplementedException();
+    }
+
+    private class Db2TestConnectionTask implements Callable<Boolean> {
+        @Override
+        public Boolean call() throws Exception {
+            try (Statement stat = createStatement()) {
+                try (ResultSet rs = stat.executeQuery("select 1 from sysibm.sysdummy1")) {
+                    if (rs.next()) {
+                        return rs.getInt(1) == 1;
+                    }
+                }
+            }
+
+            return false;
+        }
     }
 }
